@@ -29,7 +29,7 @@ git clone https://github.com/rthill/yamaha.git
     [[gf]]
         [[[living]]]
             [[[[yamaha]]]]
-                yamaha_host = 172.16.178.186
+                yamaha_host = 192.168.178.186
                 [[[[[power]]]]]
                     type = bool
                     yamaha_cmd = power
