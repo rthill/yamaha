@@ -8,6 +8,26 @@ Feel free to comment, send me compatible devices and to fill issues.
 
 As far as I know all RX-V4xx, RX-V5xx, RX-V6xx, RX-V7xx and RX-Sxxx series share the same API, so they should be ok with this plugin.
 
+
+## Prerequisite
+The following python packages need to be installed on your system:
+
+- requests
+- lxml
+
+Those packages can be installed using:
+
+<pre>
+# Debian based
+sudo apt-get install python3-lxml python3-requests
+
+#Arch Linux
+sudo pacman -S python-lxml python-requests
+
+# Fedora
+sudo dnf install python3-lxml python3-requests
+</pre>
+
 ## Installation
 <pre>
 cd smarthome.py directory
