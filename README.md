@@ -3,8 +3,11 @@ Plugin to control Yamaha RX-V and RX-S receivers, e.g.: Power On / Off, select i
 
 ## Notes
 This plugin is still under development, but for myself in daily use. I use the plugin to switch on the Yamaha RX-S600 and RX-V475 series and to change the input. Depending on the input I also adapt the volume which works fine for me. Mute is unused in my logics.
+The plugin makes use of the Yamaha Network Control (YNC) which is an XML format protocol.
+Event notifications are received over UDP Multicast, so be aware to keep the Yamaha RX-V in the same subnet as sh.py. 
 
 Feel free to comment, send me compatible devices and to fill issues.
+Only main zone is supported for the moment, if you wish to use multi zone feature please open a new issue on github.
 
 As far as I know all RX-V4xx, RX-V5xx, RX-V6xx, RX-V7xx and RX-Sxxx series share the same API, so they should be ok with this plugin.
 
@@ -21,7 +24,7 @@ Those packages can be installed using:
 # Debian based
 sudo apt-get install python3-lxml python3-requests
 
-#Arch Linux
+# Arch Linux
 sudo pacman -S python-lxml python-requests
 
 # Fedora

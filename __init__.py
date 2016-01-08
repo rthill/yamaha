@@ -20,18 +20,37 @@
 
 import logging
 import requests
+import socket
 from lxml import etree
 from io import StringIO
 
 logger = logging.getLogger('')
 
 
+class Mcast(socket.socket):
+    def __init__(self, local_port):
+        socket.socket.__init__(self, socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_REUSEPORT"):
+            self.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        self.bind(('', local_port))
+
+    def mcast_add(self, addr):
+        self.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                        socket.inet_aton(addr) + socket.inet_aton('0.0.0.0'))
+
+
 class Yamaha:
     def __init__(self, smarthome):
-        logger.warn('Init Yamaha')
+        logger.info("Init Yamaha")
         self._sh = smarthome
         self._yamaha_cmds = ['state', 'power', 'input', 'volume', 'mute']
         self._yamaha_rxv = {}
+        self.sock = None
+        self.mcast_addr = "239.255.255.250"
+        self.mcast_port = 1900
+        self.mcast_buffer = 1024
+        self.mcast_service = "urn:schemas-yamaha-com:service:X_YamahaRemoteControl:1"
 
     def run(self):
         logger.info("Yamaha items loaded, now initializing.")
@@ -46,30 +65,73 @@ class Yamaha:
                     logger.info("Initializing cmd {} for item {}".format(yamaha_cmd, item))
                     value = self._return_value(state(), yamaha_cmd)
                     item(value, "Yamaha")
+
+        logger.info("Yamaha starting listener")
+
         self.alive = True
+
+        self.sock = Mcast(self.mcast_port)
+        self.sock.mcast_add(self.mcast_addr)
+        while self.alive:
+            data, addr = self.sock.recvfrom(self.mcast_buffer)
+            if self.mcast_service in data.decode('utf-8'):
+                logger.info("Yamaha multicast received {} bytes from {}".format(len(data), addr))
+                data = data.decode('utf-8')
+                logger.debug(data)
+                for line in data.split('\r\n'):
+                    if line.startswith('<'):
+                        line = line.split('?>')[1]
+                        events = self._return_value(line, 'event')
+                        for event in events:
+                            logger.info(
+                                "Yamaha need to update the following item \"{}\" for host: {}".format(event, addr[0]))
+                            self._get_value(event.lower(), addr)
+                            if event.lower() == 'volume':
+                                self._get_value('mute', addr)
+                logger.debug("Yamaha sending ack to {}".format(addr))
+                self.sock.sendto(b'ack', addr)
+        else:
+            self.sock.close()
 
     def stop(self):
         self.alive = False
+        self.sock.shutdown(socket.SHUT_RDWR)
 
     def _return_document(self, doc):
         return etree.tostring(doc, xml_declaration=True, encoding='UTF-8', pretty_print=False)
 
-    def _power(self, value):
+    def _event_notify(self, value, cmd='PUT'):
         root = etree.Element('YAMAHA_AV')
-        root.set('cmd', 'PUT')
-        system = etree.SubElement(root, 'Main_Zone')
-        power_control = etree.SubElement(system, 'Power_Control')
-        power = etree.SubElement(power_control, 'Power')
+        root.set('cmd', cmd)
+        system = etree.SubElement(root, 'System')
+        misc = etree.SubElement(system, 'Misc')
+        event = etree.SubElement(misc, 'Event')
+        notice = etree.SubElement(event, 'Notice')
         if value:
-            power.text = 'On'
+            notice.text = 'On'
         else:
-            power.text = 'Standby'
+            notice.text = 'Off'
         tree = etree.ElementTree(root)
         return self._return_document(tree)
 
-    def _select_input(self, value):
+    def _power(self, value, cmd='PUT'):
         root = etree.Element('YAMAHA_AV')
-        root.set('cmd', 'PUT')
+        root.set('cmd', cmd)
+        system = etree.SubElement(root, 'Main_Zone')
+        power_control = etree.SubElement(system, 'Power_Control')
+        power = etree.SubElement(power_control, 'Power')
+        if value is True:
+            power.text = 'On'
+        elif value is False:
+            power.text = 'Standby'
+        elif value == 'GetParam':
+            power.text = value
+        tree = etree.ElementTree(root)
+        return self._return_document(tree)
+
+    def _input(self, value, cmd='PUT'):
+        root = etree.Element('YAMAHA_AV')
+        root.set('cmd', cmd)
         system = etree.SubElement(root, 'Main_Zone')
         input = etree.SubElement(system, 'Input')
         input_sel = etree.SubElement(input, 'Input_Sel')
@@ -77,31 +139,36 @@ class Yamaha:
         tree = etree.ElementTree(root)
         return self._return_document(tree)
 
-    def _set_volume(self, value):
+    def _volume(self, value, cmd='PUT'):
         root = etree.Element('YAMAHA_AV')
-        root.set('cmd', 'PUT')
+        root.set('cmd', cmd)
         system = etree.SubElement(root, 'Main_Zone')
         volume = etree.SubElement(system, 'Volume')
         level = etree.SubElement(volume, 'Lvl')
-        value = etree.SubElement(level, 'Val')
-        value.text = str(value)
-        exponent = etree.SubElement(level, 'Exp')
-        exponent.text = '1'
-        unit = etree.SubElement(level, 'Unit')
-        unit.text = 'dB'
+        if cmd == 'GET':
+            level.text = value
+        else:
+            val = etree.SubElement(level, 'Val')
+            val.text = str(value)
+            exponent = etree.SubElement(level, 'Exp')
+            exponent.text = '1'
+            unit = etree.SubElement(level, 'Unit')
+            unit.text = 'dB'
         tree = etree.ElementTree(root)
         return self._return_document(tree)
 
-    def _mute(self, value):
+    def _mute(self, value, cmd='PUT'):
         root = etree.Element('YAMAHA_AV')
-        root.set('cmd', 'PUT')
+        root.set('cmd', cmd)
         system = etree.SubElement(root, 'Main_Zone')
         volume = etree.SubElement(system, 'Volume')
         mute = etree.SubElement(volume, 'Mute')
-        if value:
+        if value is True:
             mute.text = 'On'
-        else:
+        elif value is False:
             mute.text = 'Off'
+        elif value == 'GetParam':
+            mute.text = value
         tree = etree.ElementTree(root)
         return self._return_document(tree)
 
@@ -114,40 +181,92 @@ class Yamaha:
         tree = etree.ElementTree(root)
         return self._return_document(tree)
 
+    def _get_value(self, notify_cmd, addr):
+        yamaha_host, port = addr
+        yamaha_payload = None
+        if notify_cmd == 'power':
+            yamaha_payload = self._power('GetParam', cmd='GET')
+        elif notify_cmd == 'volume':
+            yamaha_payload = self._volume('GetParam', cmd='GET')
+        elif notify_cmd == 'mute':
+            yamaha_payload = self._mute('GetParam', cmd='GET')
+        elif notify_cmd == 'input':
+            yamaha_payload = self._input('GetParam', cmd='GET')
+        else:
+            logger.warn("Yamaha unsupported notify command.")
+
+        res = self._submit_payload(yamaha_host, yamaha_payload)
+        logger.debug(res)
+        value = self._return_value(res, notify_cmd)
+        item = self._yamaha_rxv[yamaha_host][notify_cmd]
+        item(value, "Yamaha")
+
     def _return_value(self, state, cmd):
         tree = etree.parse(StringIO(state))
         if cmd == 'input':
-            value = tree.find('Main_Zone/Basic_Status/Input/Input_Sel')
-            return value.text
+            try:
+                value = tree.find('Main_Zone/Basic_Status/Input/Input_Sel')
+                return value.text
+            except:
+                value = tree.find('Main_Zone/Input/Input_Sel')
+                return value.text
         elif cmd == 'volume':
-            value = tree.find('Main_Zone/Basic_Status/Volume/Lvl/Val')
-            return int(value.text)
+            try:
+                value = tree.find('Main_Zone/Basic_Status/Volume/Lvl/Val')
+                return int(value.text)
+            except:
+                value = tree.find('Main_Zone/Volume/Lvl/Val')
+                return int(value.text)
         elif cmd == 'mute':
-            value = tree.find('Main_Zone/Basic_Status/Volume/Mute')
-            if value.text == 'On':
-                return True
-            elif value.text == 'Off':
-                return False
-            return value.text
+            try:
+                value = tree.find('Main_Zone/Basic_Status/Volume/Mute')
+                if value.text == 'On':
+                    return True
+                elif value.text == 'Off':
+                    return False
+                return value.text
+            except:
+                value = tree.find('Main_Zone/Volume/Mute')
+                if value.text == 'On':
+                    return True
+                elif value.text == 'Off':
+                    return False
+                return value.text
         elif cmd == 'power':
-            value = tree.find('Main_Zone/Basic_Status/Power_Control/Power')
-            if value.text == 'Standby':
-                return False
-            elif value.text == 'On':
-                return True
+            try:
+                value = tree.find('Main_Zone/Basic_Status/Power_Control/Power')
+                if value.text == 'Standby':
+                    return False
+                elif value.text == 'On':
+                    return True
+            except:
+                value = tree.find('Main_Zone/Power_Control/Power')
+                if value.text == 'Standby':
+                    return False
+                elif value.text == 'On':
+                    return True
+        elif cmd == 'event':
+            events = []
+            for entry in tree.findall('Main_Zone/Property'):
+                events.append(entry.text)
+            return events
 
     def _submit_payload(self, host, payload):
-        logger.debug("Sending payload {}".format(payload))
-        res = requests.post("http://%s/YamahaRemoteControl/ctrl" % host,
-                            headers={
-                                "Accept": "text/xml",
-                                "User-Agent": "sh.py"
-                            },
-                            timeout=4,
-                            data=payload)
-        response = res.text
-        del res
-        return response
+        if payload:
+            logger.debug("Sending payload {}".format(payload))
+            res = requests.post("http://%s/YamahaRemoteControl/ctrl" % host,
+                                headers={
+                                    "Accept": "text/xml",
+                                    "User-Agent": "sh.py"
+                                },
+                                timeout=4,
+                                data=payload)
+            response = res.text
+            del res
+            return response
+        else:
+            logger.warn("No payload received.")
+            return None
 
     def _lookup_host(self, item):
         parent = item.return_parent()
@@ -174,18 +293,23 @@ class Yamaha:
             yamaha_cmd = item.conf['yamaha_cmd']
             yamaha_host = self._lookup_host(item)
             yamaha_payload = None
+            yamaha_notify = False
 
             if yamaha_cmd == 'power':
                 yamaha_payload = self._power(item())
+                yamaha_notify = True
             elif yamaha_cmd == 'volume':
-                yamaha_payload = self._set_volume(item())
+                yamaha_payload = self._volume(item())
             elif yamaha_cmd == 'mute':
                 yamaha_payload = self._mute(item())
             elif yamaha_cmd == 'input':
-                yamaha_payload = self._select_input(item())
+                yamaha_payload = self._input(item())
 
             self._submit_payload(yamaha_host, yamaha_payload)
             self._update_state(yamaha_host)
+            if yamaha_notify:
+                # When power on, ensure event notify is enabled
+                self._submit_payload(yamaha_host, self._event_notify(True))
             return None
 
     def _update_state(self, yamaha_host):
