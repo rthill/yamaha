@@ -45,6 +45,7 @@ class Yamaha:
         logger.info("Init Yamaha")
         self._sh = smarthome
         self._yamaha_cmds = ['state', 'power', 'input', 'volume', 'mute']
+        self._yamaha_ignore_cmds = ['play_info', 'list_info']
         self._yamaha_rxv = {}
         self.sock = None
         self.mcast_addr = "239.255.255.250"
@@ -67,28 +68,39 @@ class Yamaha:
                     item(value, "Yamaha")
 
         logger.info("Yamaha starting listener")
-
         self.alive = True
-
         self.sock = Mcast(self.mcast_port)
         self.sock.mcast_add(self.mcast_addr)
         while self.alive:
             data, addr = self.sock.recvfrom(self.mcast_buffer)
+            try:
+                host, port = addr
+            except TypeError:
+                pass
             if self.mcast_service in data.decode('utf-8'):
-                logger.info("Yamaha multicast received {} bytes from {}".format(len(data), addr))
-                data = data.decode('utf-8')
-                logger.debug(data)
-                for line in data.split('\r\n'):
-                    if line.startswith('<'):
-                        line = line.split('?>')[1]
-                        events = self._return_value(line, 'event')
-                        for event in events:
-                            logger.info(
-                                "Yamaha need to update the following item \"{}\" for host: {}".format(event, addr[0]))
-                            self._get_value(event.lower(), addr)
-                            if event.lower() == 'volume':
-                                self._get_value('mute', addr)
-                logger.debug("Yamaha sending ack to {}".format(addr))
+                if host not in list(self._yamaha_rxv.keys()):
+                    logger.warn("Yamaha received notify from unknown host {}".format(host))
+                else:
+                    logger.info("Yamaha multicast received {} bytes from {}".format(len(data), host))
+                    data = data.decode('utf-8')
+                    logger.debug(data)
+                    for line in data.split('\r\n'):
+                        if line.startswith('<'):
+                            line = line.split('?>')[1]
+                            events = self._return_value(line, 'event')
+                            for event in events:
+                                if event.lower() in self._yamaha_cmds:
+                                    logger.info(
+                                            "Yamaha need to update the following item \"{}\" for host: {}".format(event,
+                                                                                                                  host))
+                                    self._get_value(event.lower(), host)
+                                    if event.lower() == 'volume':
+                                        self._get_value('mute', host)
+                                elif event.lower() in self._yamaha_ignore_cmds:
+                                    logger.debug("Yamaha ignoring command {}.".format(event))
+                                else:
+                                    logger.warn("Yamaha unsupported notify command.")
+                logger.debug("Yamaha sending ack to {}:{}".format(host, port))
                 self.sock.sendto(b'ack', addr)
         else:
             self.sock.close()
@@ -181,8 +193,7 @@ class Yamaha:
         tree = etree.ElementTree(root)
         return self._return_document(tree)
 
-    def _get_value(self, notify_cmd, addr):
-        yamaha_host, port = addr
+    def _get_value(self, notify_cmd, yamaha_host):
         yamaha_payload = None
         if notify_cmd == 'power':
             yamaha_payload = self._power('GetParam', cmd='GET')
@@ -192,8 +203,6 @@ class Yamaha:
             yamaha_payload = self._mute('GetParam', cmd='GET')
         elif notify_cmd == 'input':
             yamaha_payload = self._input('GetParam', cmd='GET')
-        else:
-            logger.warn("Yamaha unsupported notify command.")
 
         res = self._submit_payload(yamaha_host, yamaha_payload)
         logger.debug(res)
@@ -202,7 +211,10 @@ class Yamaha:
         item(value, "Yamaha")
 
     def _return_value(self, state, cmd):
-        tree = etree.parse(StringIO(state))
+        try:
+            tree = etree.parse(StringIO(state))
+        except Exception:
+            return "Invalid data received"
         if cmd == 'input':
             try:
                 value = tree.find('Main_Zone/Basic_Status/Input/Input_Sel')
