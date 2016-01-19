@@ -70,9 +70,6 @@ git clone https://github.com/rthill/yamaha.git
                     type = str
                     yamaha_cmd = input
                     enforce_updates = True
-                [[[[[state]]]]]
-                    type = str
-                    yamaha_cmd = state
 </pre>
 
 ### Example CLI usage

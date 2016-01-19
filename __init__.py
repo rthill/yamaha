@@ -55,16 +55,14 @@ class Yamaha:
 
     def run(self):
         logger.info("Yamaha items loaded, now initializing.")
-        for yamaha_host in self._yamaha_rxv.keys():
-            self._update_state(yamaha_host)
         for yamaha_host, yamaha_cmd in self._yamaha_rxv.items():
             logger.info("Initializing items for host: {}".format(yamaha_host))
-            state = self._yamaha_rxv[yamaha_host]['state']
-            logger.debug(state())
+            state = self._update_state(yamaha_host)
+            logger.debug(state)
             for yamaha_cmd, item in yamaha_cmd.items():
                 if yamaha_cmd != 'state':
                     logger.info("Initializing cmd {} for item {}".format(yamaha_cmd, item))
-                    value = self._return_value(state(), yamaha_cmd)
+                    value = self._return_value(state, yamaha_cmd)
                     item(value, "Yamaha")
 
         logger.info("Yamaha starting listener")
@@ -181,6 +179,15 @@ class Yamaha:
             mute.text = 'Off'
         elif value == 'GetParam':
             mute.text = value
+        tree = etree.ElementTree(root)
+        return self._return_document(tree)
+
+    def _validate_inputs(self):
+        root = etree.Element('YAMAHA_AV')
+        root.set('cmd', 'GET')
+        system = etree.SubElement(root, 'System')
+        state = etree.SubElement(system, 'Config')
+        state.text = 'GetParam'
         tree = etree.ElementTree(root)
         return self._return_document(tree)
 
@@ -326,6 +333,4 @@ class Yamaha:
 
     def _update_state(self, yamaha_host):
         state = self._submit_payload(yamaha_host, self._get_state())
-        item = self._yamaha_rxv[yamaha_host]['state']
-        item(state, "Yamaha")
-        return None
+        return state
