@@ -54,17 +54,7 @@ class Yamaha:
         self.mcast_service = "urn:schemas-yamaha-com:service:X_YamahaRemoteControl:1"
 
     def run(self):
-        logger.info("Yamaha items loaded, now initializing.")
-        for yamaha_host, yamaha_cmd in self._yamaha_rxv.items():
-            logger.info("Initializing items for host: {}".format(yamaha_host))
-            state = self._update_state(yamaha_host)
-            logger.debug(state)
-            for yamaha_cmd, item in yamaha_cmd.items():
-                if yamaha_cmd != 'state':
-                    logger.info("Initializing cmd {} for item {}".format(yamaha_cmd, item))
-                    value = self._return_value(state, yamaha_cmd)
-                    item(value, "Yamaha")
-
+        self._sh.trigger('Yamaha', self._initialize)
         logger.info("Yamaha starting listener")
         self.alive = True
         self.sock = Mcast(self.mcast_port)
@@ -106,6 +96,18 @@ class Yamaha:
     def stop(self):
         self.alive = False
         self.sock.shutdown(socket.SHUT_RDWR)
+
+    def _initialize(self):
+        logger.info("Yamaha now initializing current state")
+        for yamaha_host, yamaha_cmd in self._yamaha_rxv.items():
+            logger.info("Initializing items for host: {}".format(yamaha_host))
+            state = self._update_state(yamaha_host)
+            logger.debug(state)
+            for yamaha_cmd, item in yamaha_cmd.items():
+                if yamaha_cmd != 'state':
+                    logger.info("Initializing cmd {} for item {}".format(yamaha_cmd, item))
+                    value = self._return_value(state, yamaha_cmd)
+                    item(value, "Yamaha")
 
     def _return_document(self, doc):
         return etree.tostring(doc, xml_declaration=True, encoding='UTF-8', pretty_print=False)
