@@ -21,6 +21,7 @@ import requests
 import socket
 from lxml import etree
 from io import StringIO
+from lib.model.smartplugin import SmartPlugin
 
 logger = logging.getLogger('')
 
@@ -38,7 +39,10 @@ class Mcast(socket.socket):
                         socket.inet_aton(addr) + socket.inet_aton('0.0.0.0'))
 
 
-class Yamaha:
+class Yamaha(SmartPlugin):
+    PLUGIN_VERSION = "1.0.0"
+    ALLOW_MULTIINSTANCE = False
+
     def __init__(self, smarthome):
         logger.info("Init Yamaha")
         self._sh = smarthome
