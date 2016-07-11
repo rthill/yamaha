@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
+# vim: set encoding=utf-8 tabstop=4 softtabstop=4 shiftwidth=4 expandtab
 #########################################################################
 #  Copyright 2016 Raoul Thill                       raoul.thill@gmail.com
 #########################################################################
-#  This plugin is free software: you can redistribute it and/or modify
+#  This file is part of SmartHomeNG.
+#
+#  SmartHomeNG is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
 #  the Free Software Foundation, either version 3 of the License, or
 #  (at your option) any later version.
 #
-#  This plugin is distributed in the hope that it will be useful,
+#  SmartHomeNG is distributed in the hope that it will be useful,
 #  but WITHOUT ANY WARRANTY; without even the implied warranty of
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #  GNU General Public License for more details.
 #
 #  You should have received a copy of the GNU General Public License
-#  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#  along with SmartHomeNG. If not, see <http://www.gnu.org/licenses/>.
 #########################################################################
 
 import logging
@@ -22,8 +25,6 @@ import socket
 from lxml import etree
 from io import StringIO
 from lib.model.smartplugin import SmartPlugin
-
-logger = logging.getLogger('')
 
 
 class Mcast(socket.socket):
@@ -44,7 +45,8 @@ class Yamaha(SmartPlugin):
     ALLOW_MULTIINSTANCE = False
 
     def __init__(self, smarthome):
-        logger.info("Init Yamaha")
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("Init Yamaha")
         self._sh = smarthome
         self._yamaha_cmds = ['state', 'power', 'input', 'volume', 'mute']
         self._yamaha_ignore_cmds = ['play_info', 'list_info']
@@ -57,7 +59,7 @@ class Yamaha(SmartPlugin):
 
     def run(self):
         self._sh.trigger('Yamaha', self._initialize)
-        logger.info("Yamaha starting listener")
+        self.logger.info("Yamaha starting listener")
         self.alive = True
         self.sock = Mcast(self.mcast_port)
         self.sock.mcast_add(self.mcast_addr)
@@ -69,28 +71,28 @@ class Yamaha(SmartPlugin):
                 pass
             if self.mcast_service in data.decode('utf-8'):
                 if host not in list(self._yamaha_rxv.keys()):
-                    logger.warn("Yamaha received notify from unknown host {}".format(host))
+                    self.logger.warn("Yamaha received notify from unknown host {}".format(host))
                 else:
-                    logger.info("Yamaha multicast received {} bytes from {}".format(len(data), host))
+                    self.logger.info("Yamaha multicast received {} bytes from {}".format(len(data), host))
                     data = data.decode('utf-8')
-                    logger.debug(data)
+                    self.logger.debug(data)
                     for line in data.split('\r\n'):
                         if line.startswith('<'):
                             line = line.split('?>')[1]
                             events = self._return_value(line, 'event')
                             for event in events:
                                 if event.lower() in self._yamaha_cmds:
-                                    logger.info(
-                                            "Yamaha need to update the following item \"{}\" for host: {}".format(event,
-                                                                                                                  host))
+                                    self.logger.info(
+                                        "Yamaha need to update the following item \"{}\" for host: {}".format(event,
+                                                                                                              host))
                                     self._get_value(event.lower(), host)
                                     if event.lower() == 'volume':
                                         self._get_value('mute', host)
                                 elif event.lower() in self._yamaha_ignore_cmds:
-                                    logger.debug("Yamaha ignoring command {}.".format(event))
+                                    self.logger.debug("Yamaha ignoring command {}.".format(event))
                                 else:
-                                    logger.warn("Yamaha unsupported notify command.")
-                logger.debug("Yamaha sending ack to {}:{}".format(host, port))
+                                    self.logger.warn("Yamaha unsupported notify command.")
+                self.logger.debug("Yamaha sending ack to {}:{}".format(host, port))
                 self.sock.sendto(b'ack', addr)
         else:
             self.sock.close()
@@ -100,14 +102,14 @@ class Yamaha(SmartPlugin):
         self.sock.shutdown(socket.SHUT_RDWR)
 
     def _initialize(self):
-        logger.info("Yamaha now initializing current state")
+        self.logger.info("Yamaha now initializing current state")
         for yamaha_host, yamaha_cmd in self._yamaha_rxv.items():
-            logger.info("Initializing items for host: {}".format(yamaha_host))
+            self.logger.info("Initializing items for host: {}".format(yamaha_host))
             state = self._update_state(yamaha_host)
-            logger.debug(state)
+            self.logger.debug(state)
             for yamaha_cmd, item in yamaha_cmd.items():
                 if yamaha_cmd != 'state':
-                    logger.info("Initializing cmd {} for item {}".format(yamaha_cmd, item))
+                    self.logger.info("Initializing cmd {} for item {}".format(yamaha_cmd, item))
                     value = self._return_value(state, yamaha_cmd)
                     item(value, "Yamaha")
 
@@ -216,7 +218,7 @@ class Yamaha(SmartPlugin):
             yamaha_payload = self._input('GetParam', cmd='GET')
 
         res = self._submit_payload(yamaha_host, yamaha_payload)
-        logger.debug(res)
+        self.logger.debug(res)
         value = self._return_value(res, notify_cmd)
         item = self._yamaha_rxv[yamaha_host][notify_cmd]
         item(value, "Yamaha")
@@ -276,7 +278,7 @@ class Yamaha(SmartPlugin):
 
     def _submit_payload(self, host, payload):
         if payload:
-            logger.debug("Sending payload {}".format(payload))
+            self.logger.debug("Sending payload {}".format(payload))
             res = requests.post("http://%s/YamahaRemoteControl/ctrl" % host,
                                 headers={
                                     "Accept": "text/xml",
@@ -288,7 +290,7 @@ class Yamaha(SmartPlugin):
             del res
             return response
         else:
-            logger.warn("No payload received.")
+            self.logger.warn("No payload received.")
             return None
 
     def _lookup_host(self, item):
@@ -301,7 +303,7 @@ class Yamaha(SmartPlugin):
             yamaha_host = self._lookup_host(item)
             yamaha_cmd = item.conf['yamaha_cmd'].lower()
             if not yamaha_cmd in self._yamaha_cmds:
-                logger.warning("{} not in valid commands: {}".format(yamaha_cmd, self._yamaha_cmds))
+                self.logger.warning("{} not in valid commands: {}".format(yamaha_cmd, self._yamaha_cmds))
                 return None
             else:
                 try:
