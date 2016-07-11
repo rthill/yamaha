@@ -1,3 +1,6 @@
+# Important
+__This plugin has been merged into [smarthomeNG](https://github.com/smarthomeNG/smarthome). No modifications are done in this repository anymore.__
+ 
 # smarthome-yamaha
 Plugin to control Yamaha RX-V and RX-S receivers, e.g.: Power On / Off, select input, set volume and mute.
 
